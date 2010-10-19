@@ -22,6 +22,11 @@ import javax.servlet.http.HttpServletResponse
 import groovyx.gaelyk.plugins.PluginsHandler
 import javax.servlet.ServletConfig
 import groovyx.gaelyk.logging.GroovyLogger
+import groovy.text.Template
+import groovy.text.SimpleTemplateEngine.SimpleTemplate
+import java.util.concurrent.ConcurrentHashMap
+import java.lang.ref.SoftReference
+import groovy.text.SimpleTemplateEngine
 
 /**
  * The Gaelyk template servlet extends Groovy's own template servlet 
@@ -34,9 +39,12 @@ import groovyx.gaelyk.logging.GroovyLogger
  */
 class GaelykTemplateServlet extends TemplateServlet {
 
+    private String rootPath
+
     @Override
     void init(ServletConfig config) {
         super.init(config)
+        rootPath = servletContext.getRealPath("/")
         PluginsHandler.instance.initPlugins()
     }
 
@@ -66,4 +74,32 @@ class GaelykTemplateServlet extends TemplateServlet {
             super.service(request, response)
         }
     }
+
+  private final def classCache = new ConcurrentHashMap()
+
+  protected Template getTemplate(File file) {
+    def path = file.absolutePath
+    String name = "__generated_templates__${path.substring(rootPath.length(),path.length()-5)}".replace('/', '.').replace('\\', '.').replace('-','_') // 5 == '.gtpl'.length ()
+
+    def old = classCache.get(name)
+    Class cls
+    if(!old || !(cls = old.get())) {
+      try {
+          cls = getClass().getClassLoader().loadClass(name)
+      }
+      catch(t) { //
+      }
+
+      if (!cls) {
+        def res = super.getTemplate(file)
+        classCache.putIfAbsent(name, new SoftReference(res.script.class))
+        return res
+      }
+      else {
+        classCache.putIfAbsent(name, new SoftReference(cls))
+      }
+    }
+
+    return new SimpleTemplate(script:cls.newInstance())
+  }
 }
